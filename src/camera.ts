@@ -132,10 +132,15 @@ export class Camera {
   }
 
   public async stopPreview(): Promise<void> {
+    if (!this.previewActive) return
+
     this.previewActive = false;
     this.previewStream = null;
     await this.cancelCurrentOperation();
+    // setTimeout(() => {
     this.state.next(CameraState.READY);
+    // }, 1000);
+    console.log('Preview stopped')
   }
 
   private async streamFrames(onFrame: (blob: Blob) => void) {
@@ -198,17 +203,17 @@ export class Camera {
   }
 
   // CONSUME PENDING EVENTS
-  async consumeEvents(): Promise<boolean> {
+  private async consumeEvents(): Promise<boolean> {
     return this.#schedule((context: Context) => context.consumeEvents());
   }
 
   async cancelCurrentOperation() {
-    // const had_events = await this.consumeEvents();
-    // if (had_events) {
-    //   console.log('Events were consumed before cancel');
-    // } else {
-    //   console.log('No events were consumed before cancel');
-    // }
+    const had_events = await this.consumeEvents();
+    if (had_events) {
+      console.log('Events were consumed before cancel');
+    } else {
+      console.log('No events were consumed before cancel');
+    }
     this.#queue = Promise.resolve();
   }
 
