@@ -5,15 +5,15 @@ export default {
   input: "src/index.ts",
   output: [
     {
-      file: "dist/index.js",
+      file: "build/index.js",
       format: "es",
     },
     {
-      file: "dist/index.mjs",
+      file: "build/index.mjs",
       format: "es",
     },
     {
-      file: "dist/libapi.wasm",
+      file: "build/libapi.wasm",
       format: "es",
     },
   ],

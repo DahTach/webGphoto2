@@ -1,193 +1,223 @@
 /// <reference types="w3c-web-usb" />
-import { initModule, Context } from './libapi';
+import { initModule, Context, Module } from './libapi';
 import { BehaviorSubject } from 'rxjs';
 
 export enum CameraState {
-  DISCONNECTED,
-  CONNECTING,
-  READY,
   BUSY,
+  READY,
+  CONNECTED,
+  DISCONNECTED,
   ERROR
-}
-
-// Distinguish critical errors from library errors.
-export function rethrowIfCritical(err: any): boolean {
-  // If it's precisely Error, it's a custom error;
-  // anything else - SyntaxError, WebAssembly.RuntimeError, TypeError, etc. -
-  // is treated as critical here.
-  if (err?.constructor !== Error) {
-    throw err;
-  }
-  return false;
 }
 
 const INTERFACE_CLASS = 6; // PTP
 const INTERFACE_SUBCLASS = 1; // MTP
-let ModulePromise: any
+// const CANON_PID = 13026;
+// TEST: Nikon D3200
+const CANON_PID = 1068;
+
+let ModuleFactory: Promise<Module>
 
 export class Camera {
 
-  #queue = Promise.resolve();
+  #queue: Promise<any> = Promise.resolve();
   #context: Context | null = null;
 
   public state = new BehaviorSubject<CameraState>(CameraState.DISCONNECTED);
-  public events = new BehaviorSubject<string>('');
 
-  #isPreviewMode = false;
+  private device: USBDevice | null = null
 
-  constructor() {
-    this.state.subscribe(state => {
-      if (state === CameraState.ERROR) {
-        this.handleError();
+  constructor() { }
+
+  private async pairCamera(): Promise<USBDevice | null> {
+    try {
+      // Return cached device if available
+      if (this.device?.opened) {
+        console.log('Camera already opened:', this.device)
+        return this.device;
       }
-    }
-    )
-  }
 
-  private handleError() {
-    console.error('Camera entered ERROR state');
-    this.events.next('Camera error occurred');
-    // Attempt to recover or notify user
-    setTimeout(() => this.attemptRecovery(), 5000);
-  }
+      // Check existing devices
+      const devices = await navigator.usb.getDevices();
+      console.log('found devices:', devices, 'looking for:', CANON_PID)
+      const existingCamera = devices.find(device => device.productId === CANON_PID);
 
-  private attemptRecovery() {
-    if (this.state.value === CameraState.ERROR) {
-      this.disconnect().then(() => this.connect());
-    }
-  }
 
-  static async showPicker() {
-    await navigator.usb.requestDevice({
-      filters: [
-        {
+      if (existingCamera) {
+        await existingCamera.open();
+        await existingCamera.selectConfiguration(1);
+        await existingCamera.claimInterface(0);
+        this.device = existingCamera;
+        console.log('Camera found:', existingCamera)
+        return existingCamera;
+      }
+
+      // If no camera found, request new device
+      const newDevice = await navigator.usb.requestDevice({
+        filters: [{
           classCode: INTERFACE_CLASS,
           subclassCode: INTERFACE_SUBCLASS
-        }
-      ]
-    });
+        }]
+      });
+
+      this.device = newDevice;
+      return newDevice;
+
+    } catch (error) {
+      console.error('Camera pairing failed:', error);
+      this.device = null;
+      return null;
+    }
   }
 
-  async connect() {
-    if (this.state.value !== CameraState.DISCONNECTED) {
-      throw new Error('Camera is already connected or connecting');
-    }
-    this.state.next(CameraState.CONNECTING);
-    try {
-      if (!ModulePromise) {
-        ModulePromise = initModule();
-      }
-      let Module = await ModulePromise;
-      console.log('Module', Module)
-      this.#context = await new Module.Context();
-      this.state.next(CameraState.READY);
-      this.events.next('Camera connected');
-      return true
-    } catch (error: any) {
-      this.state.next(CameraState.ERROR);
-      this.events.next(`Connection error: ${error.message}`);
-      throw error;
+  rethrowIfCritical(err: any): boolean {
+    if (err?.constructor !== Error) {
+      throw err;
     }
     return false;
   }
 
-  async #schedule<T>(op: (context: Context) => Promise<T>): Promise<T> {
-    if (this.state.value !== CameraState.READY) {
-      throw new Error('Camera is not ready');
+  // TODO:
+  private async handleError() {
+    await this.attemptRecovery();
+  }
+
+  // TODO:
+  private async attemptRecovery() {
+    this.disconnect().then(() => { })
+  }
+
+  private async loadWASM(): Promise<void> {
+    if (this.#context) return
+    var module: any = null;
+    try {
+      if (!ModuleFactory) {
+        ModuleFactory = initModule();
+      }
+      module = await ModuleFactory;
+      console.log('loading context...')
+      // FIX: why the fuck is this a promise?
+      this.#context = await new module.Context();
+      console.log('Context loaded:', this.#context)
+    } catch (error) {
+      this.state.next(CameraState.ERROR);
+      throw error;
+    } finally {
+      console.log('%c gPhoto2 Wasm Module Loaded:', 'color: green;', module);
     }
+  }
+
+  public async connect(): Promise<void> {
+    if (!this.device || !this.device.opened) {
+      await this.pairCamera()
+    }
+    await this.loadWASM();
+  }
+
+
+  // CAMERA OPERATIONS
+
+  // PREVIEW MODE
+  private previewActive = false;
+  private previewStream: Promise<void> | null = null;
+
+  public async startPreview(onFrame: (blob: Blob) => void) {
+    if (this.previewActive) return;
+
+    this.previewActive = true;
     this.state.next(CameraState.BUSY);
-    let res = this.#queue.then(() => op(this.#context!)).finally(() => {
-      if (this.state.value !== CameraState.DISCONNECTED) {
-        this.state.next(CameraState.READY);
+    this.previewStream = this.streamFrames(onFrame);
+
+    return this.previewStream;
+  }
+
+  public async stopPreview(): Promise<void> {
+    this.previewActive = false;
+    this.previewStream = null;
+    await this.cancelCurrentOperation();
+    this.state.next(CameraState.READY);
+  }
+
+  private async streamFrames(onFrame: (blob: Blob) => void) {
+    while (this.previewActive) {
+      try {
+        const blob = await this.capturePreviewAsBlob();
+        onFrame(blob);
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      } catch (error: any) {
+        console.error('Preview frame error:', error);
+        if (error.message !== 'Camera is not ready') {
+          this.previewActive = false;
+          throw error;
+        }
       }
-    });
-    this.#queue = res.catch(err => {
-      if (this.isDisconnectionError(err)) {
-        this.handleDisconnection();
-      } else if (rethrowIfCritical(err)) {
-        this.state.next(CameraState.ERROR);
-      }
-      throw err;
-    }).then(() => { });
+    }
+  }
+
+  private async capturePreviewAsBlob() {
+    return this.#schedule(context => context.capturePreviewAsBlob());
+  }
+
+  // CAPTURE MODE
+  async captureImage(): Promise<File> {
+    if (this.previewActive) await this.stopPreview();
+
+    this.state.next(CameraState.BUSY);
+    try {
+
+      const file = await this.#schedule(context => context.captureImageAsFile());
+
+      // TEST: for the autofocus slow capture
+      // const had_events = await this.consumeEvents();
+      // if (had_events) {
+      //   console.log('Events were consumed before capture');
+      // } else {
+      //   console.log('No events were consumed before capture');
+      // }
+      return file;
+    } catch (error) {
+      this.state.next(CameraState.ERROR);
+      throw error;
+    } finally {
+      this.state.next(CameraState.READY);
+    }
+  }
+
+  async captureImageAsFile() {
+    return this.#schedule(context => context.captureImageAsFile());
+  }
+
+
+  // DRIVER OPERATIONS
+
+  // AVOID CONCURRENT OPERATIONS
+  async #schedule<T>(op: (context: Context) => Promise<T>): Promise<T> {
+    let res = this.#queue.then(() => op(this.#context!));
+    this.#queue = res.catch(this.rethrowIfCritical);
     return res;
   }
 
-  private isDisconnectionError(err: any): boolean {
-    // FIX: this aint working
-    return (
-      err instanceof DOMException &&
-      err.name === 'NotFoundError' &&
-      err.message.includes('The device was disconnected')
-    );
+  // CONSUME PENDING EVENTS
+  async consumeEvents(): Promise<boolean> {
+    return this.#schedule((context: Context) => context.consumeEvents());
   }
 
-  private handleDisconnection() {
-    this.state.next(CameraState.DISCONNECTED);
-    this.events.next('camera_disconnected');
+  async cancelCurrentOperation() {
+    // const had_events = await this.consumeEvents();
+    // if (had_events) {
+    //   console.log('Events were consumed before cancel');
+    // } else {
+    //   console.log('No events were consumed before cancel');
+    // }
+    this.#queue = Promise.resolve();
   }
 
   async disconnect() {
+    this.state.next(CameraState.DISCONNECTED);
     if (this.#context && !this.#context.isDeleted()) {
       this.#context.delete();
     }
     this.#context = null;
-    this.state.next(CameraState.READY);
-    this.events.next('Camera disconnected');
-  }
-
-  cancelCurrentOperation() {
-    // This is a basic implementation. You might need to adjust based on your specific needs.
-    this.#queue = Promise.resolve();
-    this.state.next(CameraState.READY);
-    this.events.next('Current operation cancelled');
-  }
-
-  async getConfig() {
-    return this.#schedule((context: Context) => context.configToJS());
-  }
-
-  async getSupportedOps() {
-    if (this.#context) {
-      return this.#context.supportedOps();
-    }
-    throw new Error('You need to connect to the camera first');
-  }
-
-  async setConfigValue(name: string, value: any) {
-    return this.#schedule(async (context: Context) => {
-      await context.setConfigValue(name, value);
-      // Instead of using a timeout, poll the camera state until the change is reflected, still pretty ugly though.
-      let retries = 0;
-      while (retries < 10) {
-        const config = await context.configToJS();
-        if (config.name === value) {
-          break;
-        }
-        await new Promise(resolve => setTimeout(resolve, 100));
-        retries++;
-      }
-      if (retries === 10) {
-        throw new Error('Config value did not update in time');
-      }
-    });
-  }
-
-  async capturePreviewAsBlob() {
-    return this.#schedule((context: Context) => {
-      this.events.next('Capturing preview');
-      return context.capturePreviewAsBlob();
-    });
-  }
-
-  async captureImageAsFile() {
-    return this.#schedule((context: Context) => {
-      this.events.next('Capturing image');
-      return context.captureImageAsFile();
-    });
-  }
-
-  async consumeEvents() {
-    return this.#schedule((context: Context) => context.consumeEvents());
   }
 
 }

@@ -1,8 +1,6 @@
 export type { Config, SupportedOps } from './libapi';
-
-export function rethrowIfCritical(err: any): void;
-
-export class Camera {
+export declare function rethrowIfCritical(err: any): void;
+export declare class Camera {
   #private;
   static showPicker(): Promise<void>;
   connect(): Promise<void>;
@@ -24,4 +22,3 @@ export class Camera {
   captureImageAsFile(): Promise<File>;
   consumeEvents(): Promise<boolean>;
 }
-

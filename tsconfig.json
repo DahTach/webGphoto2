@@ -1,9 +1,9 @@
 {
   "compilerOptions": {
-    "target": "es2020",
-    "module": "es2020",
+    "target": "esnext",
+    "module": "esnext",
     "declaration": true,
-    "outDir": "./dist",
+    "outDir": "./build",
     "strict": true,
     "esModuleInterop": true,
     "moduleResolution": "node",
@@ -12,24 +12,22 @@
       "@lib/*": [
         "./src/*"
       ],
-      "@angular/core": [
-        "./node_modules/@angular/core"
-      ],
       "rxjs": [
         "./node_modules/rxjs"
       ]
     },
     "typeRoots": [
-      "./node_modules/@types",
-      "./src/types"
+      "./node_modules/@types"
+      // "./src/types"
     ]
   },
   "include": [
-    "src/**/*",
-    "src/types/**/*"
+    "src/**/*"
+    // "src/types/**/*"
   ],
   "exclude": [
     "node_modules",
-    "dist"
+    "dist",
+    "build"
   ]
 }
