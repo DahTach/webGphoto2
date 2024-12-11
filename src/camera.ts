@@ -112,7 +112,13 @@ export class Camera {
     if (!this.device || !this.device.opened) {
       await this.pairCamera()
     }
+
     await this.loadWASM();
+
+    if (this.device && this.#context) {
+      this._state.next(CameraState.CONNECTED)
+      this._state.next(CameraState.READY)
+    }
   }
 
 
