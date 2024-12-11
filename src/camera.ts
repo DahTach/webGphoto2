@@ -23,7 +23,8 @@ export class Camera {
   #queue: Promise<any> = Promise.resolve();
   #context: Context | null = null;
 
-  public state = new BehaviorSubject<CameraState>(CameraState.DISCONNECTED);
+  private _state = new BehaviorSubject<CameraState>(CameraState.DISCONNECTED);
+  public state = this._state.asObservable();
 
   private device: USBDevice | null = null
 
@@ -100,7 +101,7 @@ export class Camera {
       this.#context = await new module.Context();
       console.log('Context loaded:', this.#context)
     } catch (error) {
-      this.state.next(CameraState.ERROR);
+      this._state.next(CameraState.ERROR);
       throw error;
     } finally {
       console.log('%c gPhoto2 Wasm Module Loaded:', 'color: green;', module);
@@ -125,7 +126,7 @@ export class Camera {
     if (this.previewActive) return;
 
     this.previewActive = true;
-    this.state.next(CameraState.BUSY);
+    this._state.next(CameraState.BUSY);
     this.previewStream = this.streamFrames(onFrame);
 
     return this.previewStream;
@@ -138,7 +139,7 @@ export class Camera {
     this.previewStream = null;
     await this.cancelCurrentOperation();
     // setTimeout(() => {
-    this.state.next(CameraState.READY);
+    this._state.next(CameraState.READY);
     // }, 1000);
     console.log('Preview stopped')
   }
@@ -167,7 +168,7 @@ export class Camera {
   async captureImage(): Promise<File> {
     if (this.previewActive) await this.stopPreview();
 
-    this.state.next(CameraState.BUSY);
+    this._state.next(CameraState.BUSY);
     try {
 
       const file = await this.#schedule(context => context.captureImageAsFile());
@@ -181,10 +182,10 @@ export class Camera {
       // }
       return file;
     } catch (error) {
-      this.state.next(CameraState.ERROR);
+      this._state.next(CameraState.ERROR);
       throw error;
     } finally {
-      this.state.next(CameraState.READY);
+      this._state.next(CameraState.READY);
     }
   }
 
@@ -218,7 +219,7 @@ export class Camera {
   }
 
   async disconnect() {
-    this.state.next(CameraState.DISCONNECTED);
+    this._state.next(CameraState.DISCONNECTED);
     if (this.#context && !this.#context.isDeleted()) {
       this.#context.delete();
     }
