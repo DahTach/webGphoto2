@@ -16,7 +16,7 @@ const INTERFACE_SUBCLASS = 1; // MTP
 // TEST: Nikon D3200
 const CANON_PID = 1068;
 
-let ModuleFactory: Promise<Module>
+let ModulePromise: Promise<Module>
 
 export class Camera {
 
@@ -26,30 +26,30 @@ export class Camera {
   private _state = new BehaviorSubject<CameraState>(CameraState.DISCONNECTED);
   public state = this._state.asObservable();
 
-  private device: USBDevice | null = null
+  private static device: USBDevice | null = null
 
   constructor() { }
 
   private async pairCamera(): Promise<USBDevice | null> {
     try {
       // Return cached device if available
-      if (this.device?.opened) {
-        console.log('Camera already opened:', this.device)
-        return this.device;
+      if (Camera.device?.opened) {
+        console.log('%c camera already open', 'color: yellow;', Camera.device);
+        return Camera.device;
       }
 
       // Check existing devices
       const devices = await navigator.usb.getDevices();
-      console.log('found devices:', devices, 'looking for:', CANON_PID)
+      console.log('%c found devices:', 'color: blue;', devices, '\n looking for', CANON_PID);
       const existingCamera = devices.find(device => device.productId === CANON_PID);
 
-
+      // TODO: cazzo sono questi
       if (existingCamera) {
         await existingCamera.open();
         await existingCamera.selectConfiguration(1);
         await existingCamera.claimInterface(0);
-        this.device = existingCamera;
-        console.log('Camera found:', existingCamera)
+        Camera.device = existingCamera;
+        console.log('%c found paired camera', 'color: green;', existingCamera);
         return existingCamera;
       }
 
@@ -61,12 +61,12 @@ export class Camera {
         }]
       });
 
-      this.device = newDevice;
+      Camera.device = newDevice;
       return newDevice;
 
     } catch (error) {
       console.error('Camera pairing failed:', error);
-      this.device = null;
+      Camera.device = null;
       return null;
     }
   }
@@ -90,32 +90,38 @@ export class Camera {
 
   private async loadWASM(): Promise<void> {
     if (this.#context) return
-    var module: any = null;
+
     try {
-      if (!ModuleFactory) {
-        ModuleFactory = initModule();
+      if (!ModulePromise) {
+        ModulePromise = initModule();
       }
-      module = await ModuleFactory;
-      console.log('loading context...')
-      // FIX: why the fuck is this a promise?
-      this.#context = await new module.Context();
-      console.log('Context loaded:', this.#context)
+
+      console.log('%c loading Wasm MODULE ...', 'color: blue;');
+      let Module: Module = await ModulePromise;
+      console.log('%c gPhoto2 Wasm Module Loaded:', 'color: green;', Module);
+
+      console.log('%c loading Wasm CONTEXT ...', 'color: blue;');
+      this.#context = await new Module.Context();
+
+      if (!this.#context) {
+        console.log('%c gPhoto2 Wasm Module Context Failed:', 'color: red;', 'context is:', this.#context);
+      }
+      console.log('%c gPhoto2 Wasm Module Context Instantiated Successfully:', 'color: green;', this.#context);
+
     } catch (error) {
       this._state.next(CameraState.ERROR);
       throw error;
-    } finally {
-      console.log('%c gPhoto2 Wasm Module Loaded:', 'color: green;', module);
     }
   }
 
   public async connect(): Promise<void> {
-    if (!this.device || !this.device.opened) {
+    if (!Camera.device || !Camera.device.opened) {
       await this.pairCamera()
     }
 
     await this.loadWASM();
 
-    if (this.device && this.#context) {
+    if (Camera.device && this.#context) {
       this._state.next(CameraState.CONNECTED)
       this._state.next(CameraState.READY)
     }
@@ -131,6 +137,10 @@ export class Camera {
   public async startPreview(onFrame: (blob: Blob) => void) {
     if (this.previewActive) return;
 
+    this.#queue = Promise.resolve();
+
+    console.log('%c preview started', 'color: cyan;');
+
     this.previewActive = true;
     this._state.next(CameraState.BUSY);
     this.previewStream = this.streamFrames(onFrame);
@@ -143,11 +153,9 @@ export class Camera {
 
     this.previewActive = false;
     this.previewStream = null;
-    await this.cancelCurrentOperation();
-    // setTimeout(() => {
     this._state.next(CameraState.READY);
-    // }, 1000);
-    console.log('Preview stopped')
+    await this.cancelCurrentOperation();
+    console.log('%c preview stopped', 'color: cyan;');
   }
 
   private async streamFrames(onFrame: (blob: Blob) => void) {
@@ -157,7 +165,7 @@ export class Camera {
         onFrame(blob);
         await new Promise(resolve => requestAnimationFrame(resolve));
       } catch (error: any) {
-        console.error('Preview frame error:', error);
+        console.error('error capturing preview as blob:', error);
         if (error.message !== 'Camera is not ready') {
           this.previewActive = false;
           throw error;
@@ -174,18 +182,11 @@ export class Camera {
   async captureImage(): Promise<File> {
     if (this.previewActive) await this.stopPreview();
 
+    console.log('%c capturing image', 'color: cyan;');
+
     this._state.next(CameraState.BUSY);
     try {
-
       const file = await this.#schedule(context => context.captureImageAsFile());
-
-      // TEST: for the autofocus slow capture
-      // const had_events = await this.consumeEvents();
-      // if (had_events) {
-      //   console.log('Events were consumed before capture');
-      // } else {
-      //   console.log('No events were consumed before capture');
-      // }
       return file;
     } catch (error) {
       this._state.next(CameraState.ERROR);
@@ -217,9 +218,9 @@ export class Camera {
   async cancelCurrentOperation() {
     const had_events = await this.consumeEvents();
     if (had_events) {
-      console.log('Events were consumed before cancel');
+      console.log('%c events consumed', 'color: yellow;');
     } else {
-      console.log('No events were consumed before cancel');
+      console.log('%c no events to consume', 'color: blue;');
     }
     this.#queue = Promise.resolve();
   }
@@ -230,6 +231,9 @@ export class Camera {
       this.#context.delete();
     }
     this.#context = null;
+    this.#queue = Promise.resolve();
+
+    console.log('%c webgphoto deinstantiated successfully', 'color: green;');
   }
 
 }
