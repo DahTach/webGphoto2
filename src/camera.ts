@@ -28,7 +28,19 @@ export class Camera {
 
   private static device: USBDevice | null = null
 
-  constructor() { }
+  constructor() {
+    window.addEventListener('beforeunload', async () => {
+      this.disconnect();
+    });
+  }
+
+  private async initializeCamera(camera: USBDevice) {
+    await Promise.all([
+      camera.open(),
+      camera.selectConfiguration(1),
+      camera.claimInterface(0)
+    ]);
+  }
 
   private async pairCamera(): Promise<USBDevice | null> {
     try {
@@ -43,11 +55,16 @@ export class Camera {
       console.log('%c found devices:', 'color: blue;', devices, '\n looking for', CANON_PID);
       const existingCamera = devices.find(device => device.productId === CANON_PID);
 
-      // TODO: cazzo sono questi
       if (existingCamera) {
-        await existingCamera.open();
-        await existingCamera.selectConfiguration(1);
-        await existingCamera.claimInterface(0);
+        // TODO:
+        // try {
+        //   await this.initializeCamera(existingCamera);
+        // } catch (error) {
+        //   await existingCamera.releaseInterface(0)
+        //   await existingCamera.reset();
+        //   console.log('%c camera reset', 'color: yellow;', existingCamera);
+        //   await this.initializeCamera(existingCamera);
+        // }
         Camera.device = existingCamera;
         console.log('%c found paired camera', 'color: green;', existingCamera);
         return existingCamera;
@@ -123,6 +140,7 @@ export class Camera {
 
     if (Camera.device && this.#context) {
       this._state.next(CameraState.CONNECTED)
+      console.log('%c camera connected successfully', 'color: green;');
       this._state.next(CameraState.READY)
     }
   }
@@ -232,6 +250,8 @@ export class Camera {
     }
     this.#context = null;
     this.#queue = Promise.resolve();
+
+    await Camera.device?.reset();
 
     console.log('%c webgphoto deinstantiated successfully', 'color: green;');
   }
