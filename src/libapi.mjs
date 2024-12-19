@@ -361,7 +361,9 @@ var Module = (() => {
         !isDataURI(binaryFile) &&
         typeof fetch == "function"
       ) {
-        binaryFile = "http://localhost:8100/assets/webgphoto/libapi.wasm";
+        // binaryFile = "http://localhost:8100/assets/webgphoto/libapi.wasm";
+        const baseUrl = window.location.origin;
+        binaryFile = `${baseUrl}/assets/webgphoto/libapi.wasm`;
         return fetch(binaryFile, { credentials: "same-origin" }).then(
           (response) => {
             var result = WebAssembly.instantiateStreaming(response, imports);
