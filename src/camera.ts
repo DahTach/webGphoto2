@@ -77,8 +77,8 @@ export class Camera {
         try {
           camera = await this.initializeCamera(existingCamera);
         } catch (error) {
-          const was_open = await this.close();
-          if (was_open) camera = await this.initializeCamera(existingCamera);
+          await this.disconnect();
+          camera = await this.initializeCamera(existingCamera);
         } finally {
           if (camera) return camera;
         }
