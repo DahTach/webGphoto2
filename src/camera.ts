@@ -37,12 +37,16 @@ export class Camera {
     });
   }
 
-  private async initializeCamera(camera: USBDevice) {
+  private async initializeCamera(camera: USBDevice): Promise<USBDevice> {
     await Promise.all([
       camera.open(),
       camera.selectConfiguration(1),
       camera.claimInterface(0),
     ]);
+
+    if (Camera.device?.opened) Camera.device = camera;
+    console.log("%c found paired camera", "color: green;", camera);
+    return camera;
   }
 
   private async pairCamera(): Promise<USBDevice | null> {
@@ -68,17 +72,20 @@ export class Camera {
 
       if (existingCamera) {
         // TODO:
+        let camera: USBDevice | undefined;
         try {
-          await this.initializeCamera(existingCamera);
+          camera = await this.initializeCamera(existingCamera);
         } catch (error) {
-          await existingCamera.releaseInterface(0);
-          await existingCamera.reset();
+          await Promise.all([
+            existingCamera.reset(),
+            existingCamera.releaseInterface(0),
+            existingCamera.close(),
+          ]);
           console.log("%c camera reset", "color: yellow;", existingCamera);
-          await this.initializeCamera(existingCamera);
+          camera = await this.initializeCamera(existingCamera);
+        } finally {
+          if (camera) return camera;
         }
-        Camera.device = existingCamera;
-        console.log("%c found paired camera", "color: green;", existingCamera);
-        return existingCamera;
       }
 
       // If no camera found, request new device
