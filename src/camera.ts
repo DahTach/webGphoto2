@@ -33,6 +33,7 @@ export class Camera {
     });
 
     navigator.usb.addEventListener("disconnect", (event) => {
+      console.log("disconnected device:", event.target);
       this._state.next(CameraState.DISCONNECTED);
     });
   }
@@ -76,13 +77,8 @@ export class Camera {
         try {
           camera = await this.initializeCamera(existingCamera);
         } catch (error) {
-          await Promise.all([
-            existingCamera.reset(),
-            existingCamera.releaseInterface(0),
-            existingCamera.close(),
-          ]);
-          console.log("%c camera reset", "color: yellow;", existingCamera);
-          camera = await this.initializeCamera(existingCamera);
+          const was_open = await this.close();
+          if (was_open) camera = await this.initializeCamera(existingCamera);
         } finally {
           if (camera) return camera;
         }
@@ -278,14 +274,23 @@ export class Camera {
     this.#context = null;
     this.#queue = Promise.resolve();
 
-    if (Camera.device?.opened) {
-      await Camera.device?.reset();
-      await Camera.device?.close();
-      await Camera.device?.releaseInterface(0);
-    }
+    await this.close();
 
     this._state.next(CameraState.DISCONNECTED);
 
     console.log("%c webgphoto deinstantiated successfully", "color: green;");
+  }
+
+  async close(): Promise<boolean> {
+    if (Camera.device?.opened) {
+      await Camera.device?.reset();
+      await Camera.device?.close();
+      await Camera.device?.releaseInterface(0);
+      console.log("%c camera reset", "color: yellow;", Camera.device);
+      return true;
+    }
+
+    console.log("%c found no open camera to close ", "color: orange;");
+    return false;
   }
 }
