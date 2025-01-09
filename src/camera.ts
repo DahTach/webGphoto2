@@ -39,13 +39,13 @@ export class Camera {
   }
 
   private async initializeCamera(camera: USBDevice): Promise<USBDevice> {
-    await Promise.all([
-      camera.open(),
-      camera.selectConfiguration(1),
-      camera.claimInterface(0),
-    ]);
-
-    if (Camera.device?.opened) Camera.device = camera;
+    //await Promise.all([
+    //  camera.open(),
+    //  camera.selectConfiguration(1),
+    //  camera.claimInterface(0),
+    //]);
+    //
+    //if (Camera.device?.opened) Camera.device = camera;
     console.log("%c found paired camera", "color: green;", camera);
     return camera;
   }
@@ -72,7 +72,6 @@ export class Camera {
       );
 
       if (existingCamera) {
-        // TODO:
         let camera: USBDevice | undefined;
         try {
           camera = await this.initializeCamera(existingCamera);
@@ -80,7 +79,10 @@ export class Camera {
           await this.disconnect();
           camera = await this.initializeCamera(existingCamera);
         } finally {
-          if (camera) return camera;
+          if (camera) {
+            Camera.device = camera;
+            return camera;
+          }
         }
       }
 
@@ -95,6 +97,8 @@ export class Camera {
       });
 
       Camera.device = newDevice;
+      // WARN: this may cause problems
+      await Camera.device.open();
       return newDevice;
     } catch (error) {
       console.error("Camera pairing failed:", error);
@@ -154,7 +158,7 @@ export class Camera {
     }
   }
 
-  public async connect(): Promise<void> {
+  public async connect(): Promise<boolean> {
     if (!Camera.device || !Camera.device.opened) {
       await this.pairCamera();
     }
@@ -165,6 +169,18 @@ export class Camera {
       this._state.next(CameraState.CONNECTED);
       console.log("%c camera connected successfully", "color: green;");
       this._state.next(CameraState.READY);
+      return true;
+    } else if (!this.#context) {
+      await this.deinstantiate();
+      await this.loadWASM();
+      if (this.#context) return true;
+      return false;
+    } else if (!Camera.device?.opened) {
+      await Camera.device?.open();
+      if (Camera.device?.opened) return true;
+      return false;
+    } else {
+      return false;
     }
   }
 
@@ -266,31 +282,53 @@ export class Camera {
     this.#queue = Promise.resolve();
   }
 
-  async disconnect() {
-    if (this.#context && !this.#context.isDeleted()) {
-      this.#context.delete();
-    }
+  async disconnect(): Promise<void> {
+    await this.deinstantiate();
 
-    this.#context = null;
-    this.#queue = Promise.resolve();
-
-    // await this.close();
+    console.log("Waiting for deinstantiate");
+    //await new Promise(resolve => setTimeout(resolve, 1000));
+    await this.forceDisconnect();
 
     this._state.next(CameraState.DISCONNECTED);
-
     console.log("%c webgphoto deinstantiated successfully", "color: green;");
   }
 
-  async close(): Promise<boolean> {
-    if (Camera.device?.opened) {
-      await Camera.device?.reset();
-      await Camera.device?.releaseInterface(0);
-      await Camera.device?.close();
-      console.log("%c camera reset", "color: yellow;", Camera.device);
-      return true;
+  async deinstantiate(): Promise<void> {
+    if (this.#context && !this.#context.isDeleted()) {
+      await this.#context.delete();
     }
 
-    console.log("%c found no open camera to close ", "color: orange;");
-    return false;
+    this.#queue = Promise.resolve();
+    // WARN: commented this
+    await this.#queue;
+    this.#context = null;
+  }
+
+  async forceDisconnect() {
+    if (Camera.device?.opened) {
+      const device = Camera.device;
+      try {
+        // First release any claimed interfaces
+        for (const configuration of device.configurations) {
+          for (const iface of configuration.interfaces) {
+            if (iface.claimed) {
+              await device.releaseInterface(iface.interfaceNumber);
+            }
+          }
+        }
+
+        // Reset the device if possible
+        try {
+          await device.reset();
+        } catch (e) {
+          console.log("Reset failed, continuing with close");
+        }
+
+        // Finally close the connection
+        await device.close();
+      } catch (error) {
+        console.error("Disconnection error:", error);
+      }
+    }
   }
 }
