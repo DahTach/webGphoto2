@@ -284,8 +284,8 @@ export class Camera {
   async close(): Promise<boolean> {
     if (Camera.device?.opened) {
       await Camera.device?.reset();
-      await Camera.device?.close();
       await Camera.device?.releaseInterface(0);
+      await Camera.device?.close();
       console.log("%c camera reset", "color: yellow;", Camera.device);
       return true;
     }
