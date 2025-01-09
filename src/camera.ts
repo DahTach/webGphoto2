@@ -19,8 +19,8 @@ const CANON_PID = 13026;
 let ModulePromise: Promise<Module>;
 
 export class Camera {
-  static #queue: Promise<any> = Promise.resolve();
-  static #context: Context | null = null;
+  #queue: Promise<any> = Promise.resolve();
+  #context: Context | null = null;
 
   private _state = new BehaviorSubject<CameraState>(CameraState.DISCONNECTED);
   public state = this._state.asObservable();
@@ -121,7 +121,7 @@ export class Camera {
   }
 
   private async loadWASM(): Promise<void> {
-    if (Camera.#context) return;
+    if (this.#context) return;
 
     try {
       if (!ModulePromise) {
@@ -133,20 +133,20 @@ export class Camera {
       console.log("%c gPhoto2 Wasm Module Loaded:", "color: green;", Module);
 
       console.log("%c loading Wasm CONTEXT ...", "color: blue;");
-      Camera.#context = await new Module.Context();
+      this.#context = await new Module.Context();
 
-      if (!Camera.#context) {
+      if (!this.#context) {
         console.log(
           "%c gPhoto2 Wasm Module Context Failed:",
           "color: red;",
           "context is:",
-          Camera.#context,
+          this.#context,
         );
       }
       console.log(
         "%c gPhoto2 Wasm Module Context Instantiated Successfully:",
         "color: green;",
-        Camera.#context,
+        this.#context,
       );
     } catch (error) {
       this._state.next(CameraState.ERROR);
@@ -161,7 +161,7 @@ export class Camera {
 
     await this.loadWASM();
 
-    if (Camera.device && Camera.#context) {
+    if (Camera.device && this.#context) {
       this._state.next(CameraState.CONNECTED);
       console.log("%c camera connected successfully", "color: green;");
       this._state.next(CameraState.READY);
@@ -177,7 +177,7 @@ export class Camera {
   public async startPreview(onFrame: (blob: Blob) => void) {
     if (this.previewActive) return;
 
-    Camera.#queue = Promise.resolve();
+    this.#queue = Promise.resolve();
 
     console.log("%c preview started", "color: cyan;");
 
@@ -246,8 +246,8 @@ export class Camera {
 
   // AVOID CONCURRENT OPERATIONS
   async #schedule<T>(op: (context: Context) => Promise<T>): Promise<T> {
-    let res = Camera.#queue.then(() => op(Camera.#context!));
-    Camera.#queue = res.catch(this.rethrowIfCritical);
+    let res = this.#queue.then(() => op(this.#context!));
+    this.#queue = res.catch(this.rethrowIfCritical);
     return res;
   }
 
@@ -263,18 +263,18 @@ export class Camera {
     } else {
       console.log("%c no events to consume", "color: blue;");
     }
-    Camera.#queue = Promise.resolve();
+    this.#queue = Promise.resolve();
   }
 
   async disconnect() {
-    if (Camera.#context && !Camera.#context.isDeleted()) {
-      Camera.#context.delete();
+    if (this.#context && !this.#context.isDeleted()) {
+      this.#context.delete();
     }
 
-    Camera.#context = null;
-    Camera.#queue = Promise.resolve();
+    this.#context = null;
+    this.#queue = Promise.resolve();
 
-    await this.close();
+    // await this.close();
 
     this._state.next(CameraState.DISCONNECTED);
 
